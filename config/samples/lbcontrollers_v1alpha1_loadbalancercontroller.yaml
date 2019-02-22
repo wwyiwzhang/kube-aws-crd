@@ -1,0 +1,9 @@
+apiVersion: lbcontrollers.loadbalancer.controller.io/v1alpha1
+kind: LoadBalancerController
+metadata:
+  labels:
+    controller-tools.k8s.io: "1.0"
+  name: loadbalancercontroller-sample
+spec:
+  # Add fields here
+  foo: bar

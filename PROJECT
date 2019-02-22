@@ -1,0 +1,3 @@
+version: "1"
+domain: loadbalancer.controller.io
+repo: kube-aws-crd
