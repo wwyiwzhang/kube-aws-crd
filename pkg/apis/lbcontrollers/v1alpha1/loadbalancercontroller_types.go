@@ -31,11 +31,15 @@ type LoadBalancerControllerSpec struct {
 }
 
 // LoadBalancerService defines each service has been created as Type: LoadBalancer
+// TTL is the time to live of the DNS record in seconds
 type LoadBalancerService struct {
 	// INSERT ADDITIONAL SPEC FIELDS - load balancer type service name
 	// Important: Run "make" to regenerate code after modifying this file
-	Name       string      `json:"name,omitempty"`
-	SyncPeriod metav1.Time `json:"syncPeriod,omitempty`
+	ServiceName string `json:"serviceName" required:"true"`
+	// Namespace   string `json:"namespace,omitempty"`
+	HostedZone string `json:"hostedZone" required:"true"`
+	CNAME      string `json:"CNAME" required:"true"`
+	TTL        int32  `json:"TTL" required:"true"`
 }
 
 // LoadBalancerControllerStatus defines the observed state of LoadBalancerController
@@ -49,9 +53,9 @@ type LoadBalancerControllerStatus struct {
 type ServiceStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of service status
 	// Important: Run "make" to regenerate code after modifying this file
-	LastUpdateTime metav1.Time `json:"lastUpdate,omitempty"`
-	Name           string      `json:"name,omitempty"`
-	UpdateCount    int32       `json:"updateCount,omitempty"`
+	LastUpdate  metav1.Time `json:"lastUpdate,omitempty"`
+	ServiceName string      `json:"serviceName,omitempty"`
+	Count       int32       `json:"count,omitempty"`
 }
 
 // +genclient

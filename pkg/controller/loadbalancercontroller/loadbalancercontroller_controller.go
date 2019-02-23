@@ -19,23 +19,26 @@ package loadbalancercontroller
 import (
 	"context"
 	"reflect"
+	"time"
 
 	lbcontrollersv1alpha1 "kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
+
+	"github.com/aws/aws-sdk-go/aws/session"
+	route53 "github.com/aws/aws-sdk-go/service/route53"
+	deepcopy "github.com/getlantern/deepcopy"
 )
 
 var log = logf.Log.WithName("controller")
@@ -72,7 +75,7 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 
 	// TODO(user): Modify this to be the types you create
 	// Uncomment watch a Deployment created by LoadBalancerController - change this for objects you create
-	err = c.Watch(&source.Kind{Type: &appsv1.Deployment{}}, &handler.EnqueueRequestForOwner{
+	err = c.Watch(&source.Kind{Type: &lbcontrollersv1alpha1.LoadBalancerController{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &lbcontrollersv1alpha1.LoadBalancerController{},
 	})
@@ -114,55 +117,162 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
-	// TODO(user): Change this to be the object type created by your controller
-	// Define the desired Deployment object
-	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      instance.Name + "-deployment",
-			Namespace: instance.Namespace,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"deployment": instance.Name + "-deployment"},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"deployment": instance.Name + "-deployment"}},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:  "nginx",
-							Image: "nginx",
+	sess, err := session.NewSession()
+	if err != nil {
+		log.Error("Failed to create new session," err)
+		return
+	}
+
+	instanceCopy := interface{}
+	deepcopy.Copy(instance, instanceCopy)
+	svcStatus := instanceCopy.Spec.Status.LoadBalancerServiceStatus
+
+	for item := range instance.Spec.Services {
+		ctx := context.Background()
+		serviceIngress := r.GetServiceIngress(ctx, item.ServiceName, request.Namespace)
+		targetIngress := GetResourceRecordValue(sess, item.CNAME, item.HostedZone)
+		if &targetIngress != nil && targetIngress == serviceIngress {
+			log.Info("Detected no change for service: %s in namespace: %s", item.Service, request.Namespace)
+			return reconcile.Result{}, nil
+		} else { 
+			if &targetIngress != nil && targetIngress != serviceIngress {
+				log.Info("Deteced change for service: %s in namespace: %s", item.Service, request.Namespace)
+			} else {
+				log.Info("Detected new service ingress value for service: %s in namespace: %s", item.Service, request.Namespace)
+			}
+			err = UpsertResourceRecord(sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
+			if err != nil {
+				log.Error("Failed to update load balancer ingress in route53 for service: %s in namespace: %s", item.Service, request.Namespace)
+				return reconcile.Result{}, err
+			}
+			// Update ServiceStatus
+			currentTime := metav1.Time{time.Now()}
+			for idx, status := range instanceCopy.Spec.Status.LoadBalancerServiceStatus {
+				if status.ServiceName == item.ServiceName {
+					instanceCopy.Spec.Status.LoadBalancerServiceStatus[idx].LastUpdate = currentTime
+					instanceCopy.Spec.Status.LoadBalancerServiceStatus[idx].Count += 1
+				}
+			}
+			if !reflect.DeepEqual(instance, instanceCopy) {
+				err = r.Update(context.TODO(), found)
+				if err != nil {
+					return reconcile.Result{}, err
+				}
+			}
+			reconcile.Result{}, nil
+		}
+	}
+
+	// Compare the service load balancer ingresses with AWS route53 entries
+
+	// // TODO(user): Change this to be the object type created by your controller
+	// deploy := &lbcontrollersv1alpha1.LoadBalancerController{
+	// 	ObjectMeta: metav1.ObjectMeta{
+	// 		Name:      instance.Name,
+	// 		Namespace: instance.Namespace,
+	// 	},
+	// 	Spec: lbcontrollersv1alpha1.LoadBalancerControllerSpec{
+	// 		Selector: &metav1.LabelSelector{
+	// 			MatchLabels: map[string]string{"load-balancer-controller": instance.Name},
+	// 		},
+	// 		Services: []&lbcontrollersv1alpha1.LoadBalancerService{
+	// 			{
+
+	// 			},
+	// 			{
+
+	// 			},
+	// 		},
+	// 	},
+	// }
+	// if err := controllerutil.SetControllerReference(instance, deploy, r.scheme); err != nil {
+	// 	return reconcile.Result{}, err
+	// }
+
+	// // TODO(user): Change this for the object type created by your controller
+	// // Check if the Deployment already exists
+	// found := &appsv1.Deployment{}
+	// err = r.Get(context.TODO(), types.NamespacedName{Name: deploy.Name, Namespace: deploy.Namespace}, found)
+	// if err != nil && errors.IsNotFound(err) {
+	// 	log.Info("Creating Deployment", "namespace", deploy.Namespace, "name", deploy.Name)
+	// 	err = r.Create(context.TODO(), deploy)
+	// 	return reconcile.Result{}, err
+	// } else if err != nil {
+	// 	return reconcile.Result{}, err
+	// }
+
+	// // TODO(user): Change this for the object type created by your controller
+	// // Update the found object and write the result back if there are any changes
+	// if !reflect.DeepEqual(deploy.Spec, found.Spec) {
+	// 	found.Spec = deploy.Spec
+	// 	log.Info("Updating Deployment", "namespace", deploy.Namespace, "name", deploy.Name)
+	// 	err = r.Update(context.TODO(), found)
+	// 	if err != nil {
+	// 		return reconcile.Result{}, err
+	// 	}
+	// }
+	// return reconcile.Result{}, nil
+}
+
+func (r *ReconcileLoadBalancerController) GetServiceIngress(serviceName string, namespace string) string {
+	svc := &corev1.Service{}
+	err = r.Get(context.TODO(), types.NamespacedName{Name: serviceName, Namespace: namespace}, svc)
+	if err == nil {
+		return svc.Status.LoadBalancer.Ingress[0].Hostname
+	} else if err != nil && errors.IsNotFound(err) {
+		log.Info("Could not find load balancer service: %s in namespace: %s", serviceName, namespace)
+	}
+	return nil
+}
+
+// GetResourceRecordValue func assumes the hostedZone has been created
+// it will get the target value by searching inside hostedZone for CNAME
+func GetResourceRecordValue(session *route53.Route53, name string, hostedZone string) string {
+	listParams := &route53.ListResourceRecordSetsInput{
+		HostedZoneId:    aws.String(hostedZone),
+		StartRecordName: aws.String(name),
+		StartRecordType: aws.String("CNAME"),
+	}
+	respList, err := session.ListResourceRecordSets(listParams)
+
+	if err != nil {
+		log.Error(err.Error())
+		return
+	} else if len(respList) == 0 {
+		log.Info("Could not find target value for CNAME: %s in hosted zone: %s", name, hostedZone)
+		return
+	} else {
+		return respList.ResourceRecordSets[0].ResourceRecords[0].Value
+	}
+}
+
+func UpsertResourceRecord(session *route53.Route53, name string, hostedZone string, loadBalancerIngress string, TTL int32) bool {
+	rrsinput := &route53.ChangeResourceRecordSetsInput{
+		ChangeBatch: &route53.ChangeBatch{ // Required
+			Changes: []*route53.Change{ // Required
+				{ // Required
+					Action: aws.String("UPSERT"), // Required
+					ResourceRecordSet: &route53.ResourceRecordSet{ // Required
+						Name: aws.String(name),    // Required
+						Type: aws.String("CNAME"), // Required
+						ResourceRecords: []*route53.ResourceRecord{
+							{ // Required
+								Value: aws.String(loadBalancerIngress), // Required
+							},
 						},
+						TTL: aws.Int64(TTL),
 					},
 				},
 			},
+			Comment: aws.String("Sample update."),
 		},
+		HostedZoneId: aws.String(hostedZone), // Required
 	}
-	if err := controllerutil.SetControllerReference(instance, deploy, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
+	resp, err := svc.ChangeResourceRecordSets(rrsinput)
 
-	// TODO(user): Change this for the object type created by your controller
-	// Check if the Deployment already exists
-	found := &appsv1.Deployment{}
-	err = r.Get(context.TODO(), types.NamespacedName{Name: deploy.Name, Namespace: deploy.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		log.Info("Creating Deployment", "namespace", deploy.Namespace, "name", deploy.Name)
-		err = r.Create(context.TODO(), deploy)
-		return reconcile.Result{}, err
-	} else if err != nil {
-		return reconcile.Result{}, err
+	if err != nil {
+		log.Error(err.Error())
+		return err
 	}
-
-	// TODO(user): Change this for the object type created by your controller
-	// Update the found object and write the result back if there are any changes
-	if !reflect.DeepEqual(deploy.Spec, found.Spec) {
-		found.Spec = deploy.Spec
-		log.Info("Updating Deployment", "namespace", deploy.Namespace, "name", deploy.Name)
-		err = r.Update(context.TODO(), found)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-	}
-	return reconcile.Result{}, nil
+	return
 }
