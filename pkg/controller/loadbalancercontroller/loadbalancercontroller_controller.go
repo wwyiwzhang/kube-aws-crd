@@ -21,11 +21,13 @@ import (
 	"reflect"
 	"time"
 
-	lbcontrollersv1alpha1 "kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
+	"github.com/getlantern/deepcopy"
+	"github.com/wwyiwzhang/kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
+	lbcontrollersv1alpha1 "github.com/wwyiwzhang/kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,9 +38,9 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	route53 "github.com/aws/aws-sdk-go/service/route53"
-	deepcopy "github.com/getlantern/deepcopy"
 )
 
 var log = logf.Log.WithName("controller")
@@ -119,110 +121,58 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 
 	sess, err := session.NewSession()
 	if err != nil {
-		log.Error("Failed to create new session," err)
-		return
+		log.Error(err, "Failed to create new session")
+		return reconcile.Result{}, err
 	}
+	route53Sess := route53.New(sess)
 
-	instanceCopy := interface{}
+	instanceCopy := &v1alpha1.LoadBalancerController{}
 	deepcopy.Copy(instance, instanceCopy)
-	svcStatus := instanceCopy.Spec.Status.LoadBalancerServiceStatus
 
-	for item := range instance.Spec.Services {
-		ctx := context.Background()
-		serviceIngress := r.GetServiceIngress(ctx, item.ServiceName, request.Namespace)
-		targetIngress := GetResourceRecordValue(sess, item.CNAME, item.HostedZone)
-		if &targetIngress != nil && targetIngress == serviceIngress {
-			log.Info("Detected no change for service: %s in namespace: %s", item.Service, request.Namespace)
+	for _, item := range instance.Spec.Services {
+		serviceIngress := r.GetServiceIngress(item.ServiceName, request.Namespace)
+		targetIngress := GetResourceRecordValue(route53Sess, item.CNAME, item.HostedZone)
+		if targetIngress != "" && targetIngress == serviceIngress {
+			log.Info("Detected no change for service: %s in namespace: %s", item.ServiceName, request.Namespace)
 			return reconcile.Result{}, nil
-		} else { 
-			if &targetIngress != nil && targetIngress != serviceIngress {
-				log.Info("Deteced change for service: %s in namespace: %s", item.Service, request.Namespace)
-			} else {
-				log.Info("Detected new service ingress value for service: %s in namespace: %s", item.Service, request.Namespace)
+		}
+		if targetIngress != "" && targetIngress != serviceIngress {
+			log.Info("Deteced change for service: %s in namespace: %s", item.ServiceName, request.Namespace)
+		} else {
+			log.Info("Detected new service ingress value for service: %s in namespace: %s", item.ServiceName, request.Namespace)
+		}
+		err = upsertResourceRecord(route53Sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
+		if err != nil {
+			log.Error(err, "Failed to update load balancer ingress in route53")
+			return reconcile.Result{}, err
+		}
+		// Update ServiceStatus
+		currentTime := metav1.Time{Time: time.Now()}
+		for idx, status := range instanceCopy.Status.LoadBalancerServiceStatus {
+			if status.ServiceName == item.ServiceName {
+				instanceCopy.Status.LoadBalancerServiceStatus[idx].LastUpdate = currentTime
+				instanceCopy.Status.LoadBalancerServiceStatus[idx].Count++
 			}
-			err = UpsertResourceRecord(sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
-			if err != nil {
-				log.Error("Failed to update load balancer ingress in route53 for service: %s in namespace: %s", item.Service, request.Namespace)
-				return reconcile.Result{}, err
-			}
-			// Update ServiceStatus
-			currentTime := metav1.Time{time.Now()}
-			for idx, status := range instanceCopy.Spec.Status.LoadBalancerServiceStatus {
-				if status.ServiceName == item.ServiceName {
-					instanceCopy.Spec.Status.LoadBalancerServiceStatus[idx].LastUpdate = currentTime
-					instanceCopy.Spec.Status.LoadBalancerServiceStatus[idx].Count += 1
-				}
-			}
-			if !reflect.DeepEqual(instance, instanceCopy) {
-				err = r.Update(context.TODO(), found)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-			}
-			reconcile.Result{}, nil
 		}
 	}
-
-	// Compare the service load balancer ingresses with AWS route53 entries
-
-	// // TODO(user): Change this to be the object type created by your controller
-	// deploy := &lbcontrollersv1alpha1.LoadBalancerController{
-	// 	ObjectMeta: metav1.ObjectMeta{
-	// 		Name:      instance.Name,
-	// 		Namespace: instance.Namespace,
-	// 	},
-	// 	Spec: lbcontrollersv1alpha1.LoadBalancerControllerSpec{
-	// 		Selector: &metav1.LabelSelector{
-	// 			MatchLabels: map[string]string{"load-balancer-controller": instance.Name},
-	// 		},
-	// 		Services: []&lbcontrollersv1alpha1.LoadBalancerService{
-	// 			{
-
-	// 			},
-	// 			{
-
-	// 			},
-	// 		},
-	// 	},
-	// }
-	// if err := controllerutil.SetControllerReference(instance, deploy, r.scheme); err != nil {
-	// 	return reconcile.Result{}, err
-	// }
-
-	// // TODO(user): Change this for the object type created by your controller
-	// // Check if the Deployment already exists
-	// found := &appsv1.Deployment{}
-	// err = r.Get(context.TODO(), types.NamespacedName{Name: deploy.Name, Namespace: deploy.Namespace}, found)
-	// if err != nil && errors.IsNotFound(err) {
-	// 	log.Info("Creating Deployment", "namespace", deploy.Namespace, "name", deploy.Name)
-	// 	err = r.Create(context.TODO(), deploy)
-	// 	return reconcile.Result{}, err
-	// } else if err != nil {
-	// 	return reconcile.Result{}, err
-	// }
-
-	// // TODO(user): Change this for the object type created by your controller
-	// // Update the found object and write the result back if there are any changes
-	// if !reflect.DeepEqual(deploy.Spec, found.Spec) {
-	// 	found.Spec = deploy.Spec
-	// 	log.Info("Updating Deployment", "namespace", deploy.Namespace, "name", deploy.Name)
-	// 	err = r.Update(context.TODO(), found)
-	// 	if err != nil {
-	// 		return reconcile.Result{}, err
-	// 	}
-	// }
-	// return reconcile.Result{}, nil
+	if !reflect.DeepEqual(instance, instanceCopy) {
+		err = r.Update(context.TODO(), instanceCopy)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+	return reconcile.Result{}, nil
 }
 
 func (r *ReconcileLoadBalancerController) GetServiceIngress(serviceName string, namespace string) string {
 	svc := &corev1.Service{}
-	err = r.Get(context.TODO(), types.NamespacedName{Name: serviceName, Namespace: namespace}, svc)
+	err := r.Get(context.TODO(), types.NamespacedName{Name: serviceName, Namespace: namespace}, svc)
 	if err == nil {
 		return svc.Status.LoadBalancer.Ingress[0].Hostname
 	} else if err != nil && errors.IsNotFound(err) {
-		log.Info("Could not find load balancer service: %s in namespace: %s", serviceName, namespace)
+		log.Info("Could not find load balancer for", "service", serviceName, "namespace", namespace)
 	}
-	return nil
+	return ""
 }
 
 // GetResourceRecordValue func assumes the hostedZone has been created
@@ -236,17 +186,17 @@ func GetResourceRecordValue(session *route53.Route53, name string, hostedZone st
 	respList, err := session.ListResourceRecordSets(listParams)
 
 	if err != nil {
-		log.Error(err.Error())
-		return
-	} else if len(respList) == 0 {
+		log.Error(err, "Failed to list resource record sets")
+		return ""
+	} else if len(respList.ResourceRecordSets) == 0 {
 		log.Info("Could not find target value for CNAME: %s in hosted zone: %s", name, hostedZone)
-		return
+		return ""
 	} else {
-		return respList.ResourceRecordSets[0].ResourceRecords[0].Value
+		return *respList.ResourceRecordSets[0].ResourceRecords[0].Value
 	}
 }
 
-func UpsertResourceRecord(session *route53.Route53, name string, hostedZone string, loadBalancerIngress string, TTL int32) bool {
+func upsertResourceRecord(session *route53.Route53, name string, hostedZone string, loadBalancerIngress string, TTL int64) error {
 	rrsinput := &route53.ChangeResourceRecordSetsInput{
 		ChangeBatch: &route53.ChangeBatch{ // Required
 			Changes: []*route53.Change{ // Required
@@ -268,11 +218,11 @@ func UpsertResourceRecord(session *route53.Route53, name string, hostedZone stri
 		},
 		HostedZoneId: aws.String(hostedZone), // Required
 	}
-	resp, err := svc.ChangeResourceRecordSets(rrsinput)
+	_, err := session.ChangeResourceRecordSets(rrsinput)
 
 	if err != nil {
-		log.Error(err.Error())
+		log.Error(err, "Failed to change resource records sets")
 		return err
 	}
-	return
+	return nil
 }

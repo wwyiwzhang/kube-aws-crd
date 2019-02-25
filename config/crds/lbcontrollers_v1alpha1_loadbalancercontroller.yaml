@@ -27,8 +27,49 @@ spec:
         metadata:
           type: object
         spec:
+          properties:
+            services:
+              description: 'INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
+                Important: Run "make" to regenerate code after modifying this file'
+              items:
+                properties:
+                  CNAME:
+                    type: string
+                  TTL:
+                    format: int64
+                    type: integer
+                  hostedZone:
+                    description: Namespace   string `json:"namespace,omitempty"`
+                    type: string
+                  serviceName:
+                    description: 'INSERT ADDITIONAL SPEC FIELDS - load balancer type
+                      service name Important: Run "make" to regenerate code after
+                      modifying this file'
+                    type: string
+                type: object
+              type: array
           type: object
         status:
+          properties:
+            serviceStatus:
+              description: 'INSERT ADDITIONAL STATUS FIELD - define observed state
+                of cluster Important: Run "make" to regenerate code after modifying
+                this file'
+              items:
+                properties:
+                  count:
+                    format: int64
+                    type: integer
+                  lastUpdate:
+                    description: 'INSERT ADDITIONAL STATUS FIELD - define observed
+                      state of service status Important: Run "make" to regenerate
+                      code after modifying this file'
+                    format: date-time
+                    type: string
+                  serviceName:
+                    type: string
+                type: object
+              type: array
           type: object
   version: v1alpha1
 status:

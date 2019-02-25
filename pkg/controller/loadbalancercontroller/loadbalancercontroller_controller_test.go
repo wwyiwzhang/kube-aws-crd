@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	lbcontrollersv1alpha1 "kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
+	lbcontrollersv1alpha1 "github.com/wwyiwzhang/kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
 
 	"github.com/onsi/gomega"
 	"golang.org/x/net/context"

@@ -17,7 +17,7 @@ limitations under the License.
 package controller
 
 import (
-	"kube-aws-crd/pkg/controller/loadbalancercontroller"
+	"github.com/wwyiwzhang/kube-aws-crd/pkg/controller/loadbalancercontroller"
 )
 
 func init() {

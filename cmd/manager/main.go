@@ -20,9 +20,9 @@ import (
 	"flag"
 	"os"
 
-	"kube-aws-crd/pkg/apis"
-	"kube-aws-crd/pkg/controller"
-	"kube-aws-crd/pkg/webhook"
+	"github.com/wwyiwzhang/kube-aws-crd/pkg/apis"
+	"github.com/wwyiwzhang/kube-aws-crd/pkg/controller"
+	"github.com/wwyiwzhang/kube-aws-crd/pkg/webhook"
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"

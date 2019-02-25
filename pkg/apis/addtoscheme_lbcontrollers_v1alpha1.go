@@ -17,7 +17,7 @@ limitations under the License.
 package apis
 
 import (
-	"kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
+	"github.com/wwyiwzhang/kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
 )
 
 func init() {

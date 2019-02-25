@@ -35,11 +35,11 @@ type LoadBalancerControllerSpec struct {
 type LoadBalancerService struct {
 	// INSERT ADDITIONAL SPEC FIELDS - load balancer type service name
 	// Important: Run "make" to regenerate code after modifying this file
-	ServiceName string `json:"serviceName" required:"true"`
+	ServiceName string `json:"serviceName,omitempty"`
 	// Namespace   string `json:"namespace,omitempty"`
-	HostedZone string `json:"hostedZone" required:"true"`
-	CNAME      string `json:"CNAME" required:"true"`
-	TTL        int32  `json:"TTL" required:"true"`
+	HostedZone string `json:"hostedZone,omitempty"`
+	CNAME      string `json:"CNAME,omitempty"`
+	TTL        int64  `json:"TTL,omitempty"`
 }
 
 // LoadBalancerControllerStatus defines the observed state of LoadBalancerController
@@ -55,7 +55,7 @@ type ServiceStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	LastUpdate  metav1.Time `json:"lastUpdate,omitempty"`
 	ServiceName string      `json:"serviceName,omitempty"`
-	Count       int32       `json:"count,omitempty"`
+	Count       int64       `json:"count,omitempty"`
 }
 
 // +genclient
