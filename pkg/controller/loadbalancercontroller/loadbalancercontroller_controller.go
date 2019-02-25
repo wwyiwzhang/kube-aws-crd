@@ -132,14 +132,15 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 	for _, item := range instance.Spec.Services {
 		serviceIngress := r.GetServiceIngress(item.ServiceName, request.Namespace)
 		targetIngress := GetResourceRecordValue(route53Sess, item.CNAME, item.HostedZone)
-		if targetIngress != "" && targetIngress == serviceIngress {
+		if serviceIngress == "" {
+			continue
+		}
+		if targetIngress == serviceIngress {
 			log.Info("Detected no change for service: %s in namespace: %s", item.ServiceName, request.Namespace)
 			return reconcile.Result{}, nil
 		}
-		if targetIngress != "" && targetIngress != serviceIngress {
+		if targetIngress != serviceIngress {
 			log.Info("Deteced change for service: %s in namespace: %s", item.ServiceName, request.Namespace)
-		} else {
-			log.Info("Detected new service ingress value for service: %s in namespace: %s", item.ServiceName, request.Namespace)
 		}
 		err = upsertResourceRecord(route53Sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
 		if err != nil {
