@@ -128,7 +128,7 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 
 	instanceCopy := &v1alpha1.LoadBalancerController{}
 	deepcopy.Copy(instance, instanceCopy)
-
+	log.Info("Instance noticed", "services", instance.Spec.Services)
 	for _, item := range instance.Spec.Services {
 		serviceIngress := r.GetServiceIngress(item.ServiceName, request.Namespace)
 		targetIngress := GetResourceRecordValue(route53Sess, item.CNAME, item.HostedZone)
@@ -168,12 +168,11 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 func (r *ReconcileLoadBalancerController) GetServiceIngress(serviceName string, namespace string) string {
 	svc := &corev1.Service{}
 	err := r.Get(context.TODO(), types.NamespacedName{Name: serviceName, Namespace: namespace}, svc)
-	if err == nil {
-		return svc.Status.LoadBalancer.Ingress[0].Hostname
-	} else if err != nil && errors.IsNotFound(err) {
+	if err != nil {
 		log.Info("Could not find load balancer for", "service", serviceName, "namespace", namespace)
+		return ""
 	}
-	return ""
+	return svc.Status.LoadBalancer.Ingress[0].Hostname
 }
 
 // GetResourceRecordValue func assumes the hostedZone has been created
