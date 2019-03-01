@@ -136,11 +136,11 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 			continue
 		}
 		if targetIngress == serviceIngress {
-			log.Info("Detected no change for service: %s in namespace: %s", item.ServiceName, request.Namespace)
+			log.Info("Detected no change for ", "service", item.ServiceName, "namespace", request.Namespace)
 			return reconcile.Result{}, nil
 		}
 		if targetIngress != serviceIngress {
-			log.Info("Deteced change for service: %s in namespace: %s", item.ServiceName, request.Namespace)
+			log.Info("Deteced change for ", "service", item.ServiceName, "namespace", request.Namespace)
 		}
 		err = upsertResourceRecord(route53Sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
 		if err != nil {
@@ -169,10 +169,11 @@ func (r *ReconcileLoadBalancerController) GetServiceIngress(serviceName string, 
 	svc := &corev1.Service{}
 	err := r.Get(context.TODO(), types.NamespacedName{Name: serviceName, Namespace: namespace}, svc)
 	if err != nil {
-		log.Info("Could not find load balancer for", "service", serviceName, "namespace", namespace)
+		log.Info("Could not find load balancer for ", "service", serviceName, "namespace", namespace)
 		return ""
 	}
-	return svc.Status.LoadBalancer.Ingress[0].Hostname
+	// return svc.Status.LoadBalancer.Ingress[0].Hostname
+	return svc.Spec.ClusterIP
 }
 
 // GetResourceRecordValue func assumes the hostedZone has been created
@@ -189,7 +190,7 @@ func GetResourceRecordValue(session *route53.Route53, name string, hostedZone st
 		log.Error(err, "Failed to list resource record sets")
 		return ""
 	} else if len(respList.ResourceRecordSets) == 0 {
-		log.Info("Could not find target value for CNAME: %s in hosted zone: %s", name, hostedZone)
+		log.Info("Could not find target value for ", "CNAME", name, "hostedZone", hostedZone)
 		return ""
 	} else {
 		return *respList.ResourceRecordSets[0].ResourceRecords[0].Value

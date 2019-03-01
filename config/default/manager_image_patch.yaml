@@ -14,7 +14,20 @@ spec:
         labels:
           app: elbcontroller
     spec:
+      serviceAccount: elb
       containers:
       # Change the value of image field below to your controller image URL
       - image: wwyizhang/elbcontroller:latest
-        name: manager
+        name: elbcontroller
+        command: ["/bin/bash", "-c", "sleep 1000"]
+        volumeMounts:
+        - mountPath: /root/.aws
+          name: aws
+      volumes:
+      - name: aws
+        secret:
+          secretName: aws-key
+
+
+
+  
