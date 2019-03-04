@@ -18,13 +18,14 @@ package loadbalancercontroller
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"time"
 
 	lbcontrollersv1alpha1 "github.com/wwyiwzhang/kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	api_errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -56,7 +57,7 @@ func Add(mgr manager.Manager) error {
 
 // newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager) reconcile.Reconciler {
-	return &ReconcileLoadBalancerController{Client: mgr.GetClient(), scheme: mgr.GetScheme()}
+	return &LoadBalancerControllerReconciler{Client: mgr.GetClient(), scheme: mgr.GetScheme()}
 }
 
 // add adds a new Controller to mgr with r as the reconcile.Reconciler
@@ -86,10 +87,10 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	return nil
 }
 
-var _ reconcile.Reconciler = &ReconcileLoadBalancerController{}
+var _ reconcile.Reconciler = &LoadBalancerControllerReconciler{}
 
-// ReconcileLoadBalancerController reconciles a LoadBalancerController object
-type ReconcileLoadBalancerController struct {
+// LoadBalancerControllerReconciler reconciles a LoadBalancerController object
+type LoadBalancerControllerReconciler struct {
 	client.Client
 	scheme *runtime.Scheme
 }
@@ -103,12 +104,12 @@ type ReconcileLoadBalancerController struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=lbcontrollers.loadbalancer.controller.io,resources=loadbalancercontrollers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=lbcontrollers.loadbalancer.controller.io,resources=loadbalancercontrollers/status,verbs=get;update;patch
-func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *LoadBalancerControllerReconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	// Fetch the LoadBalancerController instance
 	instance := &lbcontrollersv1alpha1.LoadBalancerController{}
 	err := r.Get(context.TODO(), request.NamespacedName, instance)
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if api_errors.IsNotFound(err) {
 			// Object not found, return.  Created objects are automatically garbage collected.
 			// For additional cleanup logic use finalizers.
 			return reconcile.Result{}, nil
@@ -130,6 +131,9 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 	// Make a copy of the received instance
 	instanceCopy := instance.DeepCopy()
 
+	// Initialize error count
+	errorCount := 0
+
 	for _, item := range instance.Spec.Services {
 		serviceIngress := r.GetServiceIngress(item.ServiceName, request.Namespace)
 		targetIngress := GetResourceRecordValue(route53Sess, item.CNAME, item.HostedZone)
@@ -145,6 +149,7 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 			err = upsertResourceRecord(route53Sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
 			if err != nil {
 				log.Error(err, "Failed to update load balancer ingress in route53")
+				errorCount++
 				continue
 			}
 			// Update ServiceStatus with the timestamp of the lastest update and increment total count
@@ -164,10 +169,13 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 			return reconcile.Result{}, err
 		}
 	}
+	if errorCount > 0 {
+		return reconcile.Result{}, errors.New("Not every ingress upserted successfully, need retry")
+	}
 	return reconcile.Result{}, nil
 }
 
-func (r *ReconcileLoadBalancerController) GetServiceIngress(serviceName string, namespace string) string {
+func (r *LoadBalancerControllerReconciler) GetServiceIngress(serviceName string, namespace string) string {
 	svc := &corev1.Service{}
 	err := r.Get(context.TODO(), types.NamespacedName{Name: serviceName, Namespace: namespace}, svc)
 	if err != nil {
