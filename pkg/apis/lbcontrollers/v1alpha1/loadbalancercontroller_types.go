@@ -80,6 +80,21 @@ type LoadBalancerControllerList struct {
 	Items           []LoadBalancerController `json:"items"`
 }
 
+// Add SetFields func for LoadBalancerServiceStatus
+func (elb *LoadBalancerController) SetInitialStatus() *LoadBalancerController {
+	if len(elb.Status.LoadBalancerServiceStatus) == 0 {
+		for _, svc := range elb.Spec.Services {
+			svcStatusItem := ServiceStatus{
+				LastUpdate:  elb.CreationTimestamp,
+				ServiceName: svc.ServiceName,
+				Count:       0,
+			}
+			elb.Status.LoadBalancerServiceStatus = append(elb.Status.LoadBalancerServiceStatus, svcStatusItem)
+		}
+	}
+	return elb
+}
+
 func init() {
 	SchemeBuilder.Register(&LoadBalancerController{}, &LoadBalancerControllerList{})
 }

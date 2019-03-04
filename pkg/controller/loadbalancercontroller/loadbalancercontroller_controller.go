@@ -21,8 +21,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/getlantern/deepcopy"
-	"github.com/wwyiwzhang/kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
 	lbcontrollersv1alpha1 "github.com/wwyiwzhang/kube-aws-crd/pkg/apis/lbcontrollers/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -119,6 +117,9 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 		return reconcile.Result{}, err
 	}
 
+	// Set initial status if not exists
+	instance.SetInitialStatus()
+
 	sess, err := session.NewSession()
 	if err != nil {
 		log.Error(err, "Failed to create new session")
@@ -126,9 +127,9 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 	}
 	route53Sess := route53.New(sess)
 
-	instanceCopy := &v1alpha1.LoadBalancerController{}
-	deepcopy.Copy(instance, instanceCopy)
-	log.Info("Instance noticed", "services", instance.Spec.Services)
+	// Make a copy of the received instance
+	instanceCopy := instance.DeepCopy()
+
 	for _, item := range instance.Spec.Services {
 		serviceIngress := r.GetServiceIngress(item.ServiceName, request.Namespace)
 		targetIngress := GetResourceRecordValue(route53Sess, item.CNAME, item.HostedZone)
@@ -137,25 +138,26 @@ func (r *ReconcileLoadBalancerController) Reconcile(request reconcile.Request) (
 		}
 		if targetIngress == serviceIngress {
 			log.Info("Detected no change for ", "service", item.ServiceName, "namespace", request.Namespace)
-			return reconcile.Result{}, nil
+			continue
 		}
 		if targetIngress != serviceIngress {
 			log.Info("Deteced change for ", "service", item.ServiceName, "namespace", request.Namespace)
-		}
-		err = upsertResourceRecord(route53Sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
-		if err != nil {
-			log.Error(err, "Failed to update load balancer ingress in route53")
-			return reconcile.Result{}, err
-		}
-		// Update ServiceStatus
-		currentTime := metav1.Time{Time: time.Now()}
-		for idx, status := range instanceCopy.Status.LoadBalancerServiceStatus {
-			if status.ServiceName == item.ServiceName {
-				instanceCopy.Status.LoadBalancerServiceStatus[idx].LastUpdate = currentTime
-				instanceCopy.Status.LoadBalancerServiceStatus[idx].Count++
+			err = upsertResourceRecord(route53Sess, item.CNAME, item.HostedZone, serviceIngress, item.TTL)
+			if err != nil {
+				log.Error(err, "Failed to update load balancer ingress in route53")
+				continue
+			}
+			// Update ServiceStatus with the timestamp of the lastest update and increment total count
+			currentTime := metav1.Time{Time: time.Now()}
+			for idx, status := range instanceCopy.Status.LoadBalancerServiceStatus {
+				if status.ServiceName == item.ServiceName {
+					instanceCopy.Status.LoadBalancerServiceStatus[idx].LastUpdate = currentTime
+					instanceCopy.Status.LoadBalancerServiceStatus[idx].Count++
+				}
 			}
 		}
 	}
+
 	if !reflect.DeepEqual(instance, instanceCopy) {
 		err = r.Update(context.TODO(), instanceCopy)
 		if err != nil {
@@ -172,8 +174,7 @@ func (r *ReconcileLoadBalancerController) GetServiceIngress(serviceName string, 
 		log.Info("Could not find load balancer for ", "service", serviceName, "namespace", namespace)
 		return ""
 	}
-	// return svc.Status.LoadBalancer.Ingress[0].Hostname
-	return svc.Spec.ClusterIP
+	return svc.Status.LoadBalancer.Ingress[0].Hostname
 }
 
 // GetResourceRecordValue func assumes the hostedZone has been created
