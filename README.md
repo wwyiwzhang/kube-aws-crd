@@ -61,9 +61,9 @@ metadata:
 spec:
   services:
   - serviceName: nginx
-  hostedZone: wwyiwzhang.net
-  CNAME: some-app.wwyiwzhang.net
-  TTL: 60
+    hostedZone: wwyiwzhang.net
+    CNAME: some-app.wwyiwzhang.net
+    TTL: 60
   # add more services as needed
 ```
 
