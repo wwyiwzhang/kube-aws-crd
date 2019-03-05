@@ -49,7 +49,7 @@ spec:
 
 ### Create CRD instance
 
-After the previous steps are complete, you can now create a ELB controller CRD to notify the controller which services need to be monitored. If any of the services whose ELB ingress has changed, the controller will initiate a request to update the record set in AWS route53. In case of a newly created ELB service, the controller will also create a new record set. Below is an example of ELB controller CRD, where you can specify multiple services for the controller to watch.
+After the previous steps are complete, you can now create an ELB controller CRD to notify the controller which services need to be monitored. If any of the services whose ELB ingress has changed, the controller will initiate a request to update the record set in AWS route53. In case of a newly created ELB service, the controller will also create a new record set. Below is an example of ELB controller CRD, where you can specify multiple services for the controller to watch.
 
 ```yaml
 apiVersion: lbcontrollers.loadbalancer.controller.io/v1alpha1
